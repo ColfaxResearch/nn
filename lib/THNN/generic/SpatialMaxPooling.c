@@ -165,7 +165,7 @@ void THNN_(SpatialMaxPooling_updateOutput)(
     output_data = THTensor_(data)(output);
     indices_data = THTensor_(data)(indices);
 
-#pragma omp parallel for private(p)
+    //#pragma omp parallel for private(p)
     for (p = 0; p < nbatch; p++)
     {
       THNN_(SpatialMaxPooling_updateOutput_frame)(input_data+p*nslices*iwidth*iheight, output_data+p*nslices*owidth*oheight,

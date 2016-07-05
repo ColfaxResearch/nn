@@ -2,6 +2,93 @@
 #define TH_GENERIC_FILE "generic/SpatialConvolutionMM.c"
 #else
 
+
+#include <omp.h>
+
+
+void THNN_(batch_unfolded_copy)(
+          THTensor *finput,
+          THTensor *input,
+	  int T,
+          int kW,
+          int kH,
+          int dW,
+          int dH,
+          int padW,
+          int padH,
+          int nInputPlane,
+          int inputWidth,
+          int inputHeight,
+          int outputWidth,
+          int outputHeight)
+{
+  long k, t;
+  real *input_data = THTensor_(data)(input) + input->storageOffset;
+  real *finput_data = THTensor_(data)(finput) + finput->storageOffset;
+  long in_frame_offset = input->stride[0];
+  long out_frame_offset = finput->stride[0];
+
+
+#pragma omp parallel for collapse(2) private(k,t)
+  for(t = 0; t < T; t++) { 
+    for(k = 0; k < nInputPlane*kH*kW; k++) {
+      {
+	size_t nip = k / (kH*kW);
+	size_t rest = k % (kH*kW);
+	size_t kh = rest / kW;
+	size_t kw = rest % kW;
+	size_t x,y;
+	long long ix,iy;
+	real *dst = finput_data + t*out_frame_offset + nip*(kH*kW*outputHeight*outputWidth) + kh*(kW*outputHeight*outputWidth) + kw*(outputHeight*outputWidth);
+	real *src = input_data + t*in_frame_offset + nip*(inputHeight*inputWidth);
+	if (padW > 0 || padH > 0) {
+	  size_t lpad,rpad;
+	  for(y = 0; y < outputHeight; y++) {
+	    iy = (long long)(y*dH - padH + kh);
+	    if (iy < 0 || iy >= inputHeight) {
+	      memset(dst+y*outputWidth, 0, sizeof(real)*outputWidth);
+	    } else {
+	      if (dW==1){
+		ix = (long long)(0 - padW + kw);
+		lpad = fmaxf(0,(int)(padW-kw));
+		rpad = fmaxf(0,(int)(padW-(kW-kw-1)));
+		if (outputWidth-rpad-lpad <= 0) {
+		  memset(dst+(size_t)(y*outputWidth), 0, sizeof(real)*outputWidth);
+		} else {
+		  if (lpad > 0) memset(dst+y*outputWidth, 0, sizeof(real)*lpad);
+		  memcpy(dst+(size_t)(y*outputWidth+lpad), src+(size_t)(iy*inputWidth+ix+lpad), sizeof(real)*(outputWidth-rpad-lpad));
+		  if (rpad > 0) memset(dst+y*outputWidth + outputWidth - rpad, 0, sizeof(real)*rpad);
+		}
+	      }
+	      else{
+		for (x=0; x<outputWidth; x++){
+		  ix = (long long)(x*dW - padW + kw);
+		  if (ix < 0 || ix >= inputWidth)
+		    memset(dst+(size_t)(y*outputWidth+x), 0, sizeof(real)*1);
+		  else
+		    memcpy(dst+(size_t)(y*outputWidth+x), src+(size_t)(iy*inputWidth+ix), sizeof(real)*(1));
+		}
+	      }
+	    }
+	  }
+	} else {
+	  for(y = 0; y < outputHeight; y++) {
+	    iy = (long long)(y*dH + kh);
+	    ix = (long long)(0 + kw);
+	    if (dW == 1)
+	      memcpy(dst+(size_t)(y*outputWidth), src+(size_t)(iy*inputWidth+ix), sizeof(real)*outputWidth);
+	    else{
+	      for (x=0; x<outputWidth; x++)
+		memcpy(dst+(size_t)(y*outputWidth+x), src+(size_t)(iy*inputWidth+ix+x*dW), sizeof(real)*(1));
+	    }
+	  }
+	}
+      }
+    }
+  }
+}
+
+
 static void THNN_(SpatialConvolutionMM_updateOutput_frame)(
           THTensor *input,
           THTensor *output,
@@ -24,8 +111,8 @@ static void THNN_(SpatialConvolutionMM_updateOutput_frame)(
   long i;
   THTensor *output2d;
 
-  THNN_(unfolded_copy)(finput, input, kW, kH, dW, dH, padW, padH, nInputPlane, inputWidth, inputHeight, outputWidth, outputHeight);
-
+  THNN_(unfolded_copy)(finput, input, kW, kH, dW, dH, padW, padH, nInputPlane, inputWidth, inputHeight, outputWidth, outputHeight); 
+  
   output2d = THTensor_(newWithStorage2d)(output->storage, output->storageOffset,
                                          nOutputPlane, -1,
                                          outputHeight*outputWidth, -1);
@@ -36,10 +123,13 @@ static void THNN_(SpatialConvolutionMM_updateOutput_frame)(
     THTensor_(zero)(output);
   }
 
+
   THTensor_(addmm)(output2d, 1, output2d, 1, weight, finput);
 
+    
   THTensor_(free)(output2d);
 }
+
 
 void THNN_(SpatialConvolutionMM_updateOutput)(
           THNNState *state,
@@ -56,6 +146,7 @@ void THNN_(SpatialConvolutionMM_updateOutput)(
           int padW,
           int padH)
 {
+
   int dimf = 0;
   int dimw = 2;
   int dimh = 1;
@@ -91,6 +182,8 @@ void THNN_(SpatialConvolutionMM_updateOutput)(
   if (nInputPlane*kW*kH != weight->size[1])
     THError("Wrong number of input channels! Input has %d channels, expected %d",nInputPlane,weight->size[1]/(kW*kH));
 
+
+
   if(input->nDimension == 3)
   {
     THTensor_(resize2d)(finput, kW*kH*nInputPlane, outputHeight*outputWidth);
@@ -109,6 +202,19 @@ void THNN_(SpatialConvolutionMM_updateOutput)(
     THTensor_(resize3d)(finput, T, kW*kH*nInputPlane, outputHeight*outputWidth);
     THTensor_(resize4d)(output, T, nOutputPlane, outputHeight, outputWidth);
 
+    THNN_(batch_unfolded_copy)(finput, input, T, kW, kH, dW, dH, padW, padH, nInputPlane, inputWidth, inputHeight, outputWidth, outputHeight);
+
+
+    long i;
+    if (bias) {
+      #pragma omp parallel for collapse(2) private(i,t)
+      for(t = 0; t < T; t++)
+    	for(i = 0; i < nOutputPlane; i++)
+    	  THVector_(fill)(output->storage->data+output->storageOffset+output->stride[0]*t+output->stride[1]*i, THTensor_(get1d)(bias, i), outputHeight*outputWidth);
+    } else {
+      THTensor_(zero)(output);
+    }
+
 #pragma omp parallel for private(t)
     for(t = 0; t < T; t++)
     {
@@ -116,17 +222,42 @@ void THNN_(SpatialConvolutionMM_updateOutput)(
       THTensor *output_t = THTensor_(newSelect)(output, 0, t);
       THTensor *finput_t = THTensor_(newSelect)(finput, 0, t);
 
-      THNN_(SpatialConvolutionMM_updateOutput_frame)(input_t, output_t, weight, bias, finput_t,
-                                                   kW, kH, dW, dH, padW, padH,
-                                                   nInputPlane, inputWidth, inputHeight,
-                                                   nOutputPlane, outputWidth, outputHeight);
+    /* THNN_(SpatialConvolutionMM_updateOutput_frame)(input_t, output_t, weight, bias, finput_t, */
+    /*                                              kW, kH, dW, dH, padW, padH, */
+    /*                                              nInputPlane, inputWidth, inputHeight, */
+    /*                                              nOutputPlane, outputWidth, outputHeight); */
 
+
+      THTensor *output2d;
+      
+      /* THNN_(unfolded_copy)(finput_t, input_t, kW, kH, dW, dH, padW, padH, nInputPlane, inputWidth, inputHeight, outputWidth, outputHeight); */
+      
+      output2d = THTensor_(newWithStorage2d)(output_t->storage, output_t->storageOffset,
+      					     nOutputPlane, -1,
+      					     outputHeight*outputWidth, -1);
+
+      /* long i; */
+      /* if (bias) { */
+      /* 	for(i = 0; i < nOutputPlane; i++) */
+      /* 	  THVector_(fill)(output_t->storage->data+output_t->storageOffset+output_t->stride[0]*i, THTensor_(get1d)(bias, i), outputHeight*outputWidth); */
+      /* } else { */
+      /* 	THTensor_(zero)(output_t); */
+      /* } */
+      
+      
+      THTensor_(addmm)(output2d, 1, output2d, 1, weight, finput_t);
+            
+      THTensor_(free)(output2d);
+  
       THTensor_(free)(input_t);
       THTensor_(free)(output_t);
       THTensor_(free)(finput_t);
     }
   }
+
 }
+
+
 
 static void THNN_(SpatialConvolutionMM_updateGradInput_frame)(
           THTensor *gradInput,
@@ -143,12 +274,14 @@ static void THNN_(SpatialConvolutionMM_updateGradInput_frame)(
   THTensor *gradOutput2d = THTensor_(newWithStorage2d)(gradOutput->storage, gradOutput->storageOffset,
                                                        gradOutput->size[0], -1,
                                                        gradOutput->size[1]*gradOutput->size[2], -1);
+
   THTensor_(addmm)(fgradInput, 0, fgradInput, 1, weight, gradOutput2d);
   THTensor_(free)(gradOutput2d);
-
+  
   THTensor_(zero)(gradInput);
 
   THNN_(unfolded_acc)(fgradInput, gradInput, kW, kH, dW, dH, padW, padH, gradInput->size[0], gradInput->size[2], gradInput->size[1], gradOutput->size[2], gradOutput->size[1]);
+  
 }
 
 void THNN_(SpatialConvolutionMM_updateGradInput)(

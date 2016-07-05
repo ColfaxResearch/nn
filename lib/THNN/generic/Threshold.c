@@ -12,18 +12,24 @@ void THNN_(Threshold_updateOutput)(
 {
   if (inplace)
   {
-    TH_TENSOR_APPLY(real, input,
-      if (*input_data <= threshold)
-        *input_data = val;
-    );
+    real * in  = THTensor_(data)(input);
+#pragma vector nontemporal
+#pragma omp parallel for simd
+    for (int i = 0; i < input->storage->size; i++) {
+      in[i] = in[i] <= threshold ? val : in[i];
+    }
     THTensor_(set)(output, input);
   }
   else
   {
     THTensor_(resizeAs)(output, input);
-    TH_TENSOR_APPLY2(real, output, real, input,
-      *output_data = (*input_data > threshold) ? *input_data : val;
-    );
+    real * in  = THTensor_(data)(input);
+    real * out = THTensor_(data)(output);
+#pragma vector nontemporal
+#pragma omp parallel for simd
+    for (int i = 0; i < output->storage->size; i++) {
+      out[i] = in[i] > threshold ? in[i] : val;
+    }
   }
 }
 
