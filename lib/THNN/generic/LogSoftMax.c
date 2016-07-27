@@ -41,35 +41,39 @@ void THNN_(LogSoftMax_updateOutput)(
     maxInput = -THInf; //sizeof(real) == sizeof(float) ? -FLT_MAX : -DBL_MAX;
     input_data = input_data0 + dim*t;
     output_data = output_data0 + dim*t;
-    
-    for (d = 0; d < dim; d++)
-      maxInput = THMax(maxInput, input_data[d]);
-    
+ 
+//    for (d = 0; d < dim; d++)
+//      maxInput = THMax(maxInput, input_data[d]);
+//    
+//#ifdef TH_REAL_IS_FLOAT
+//    for (d = 0; d < dim; d++)
+//      logsum += expf(input_data[d] - maxInput);
+//    logsum = maxInput + logf(logsum);
+//#else
+//    for (d = 0; d < dim; d++)
+//      logsum += exp(input_data[d] - maxInput);
+//    logsum = maxInput + log(logsum);
+//#endif
+//    for (d = 0; d < dim; d++)
+//      output_data[d] = input_data[d] - logsum;
+    //what about not using maxInput
+    accreal sum;
+    sum = 0;
 #ifdef TH_REAL_IS_FLOAT
     for (d = 0; d < dim; d++)
-      logsum += expf(input_data[d] - maxInput);
-    logsum = maxInput + logf(logsum);
+        sum += expf(input_data[d]);
+    sum = logf(sum);
 #else
     for (d = 0; d < dim; d++)
-      logsum += exp(input_data[d] - maxInput);
-    logsum = maxInput + log(logsum);
+        sum += exp(input_data[d]);
+    sum = log(sum);
 #endif
+    for (d = 0; d < dim; d++) 
+        output_data[d] = input_data[d] - sum;
 
-    /* if(sizeof(real) == sizeof(float)) { */
-    /*   for (d = 0; d < dim; d++) */
-    /* 	logsum += expf(input_data[d] - maxInput); */
-    /*   logsum = maxInput + logf(logsum); */
-    /* } else { */
-    /*   for (d = 0; d < dim; d++) */
-    /* 	logsum += exp(input_data[d] - maxInput); */
-    /*   logsum = maxInput + log(logsum);       */
-    /* } */
-    for (d = 0; d < dim; d++)
-      output_data[d] = input_data[d] - logsum;
-  }
+}
   
   THTensor_(free)(input);
-  //printf("LogSoftMax timer %.2fus\n", 1000 * 1000 * (omp_get_wtime() - t0));
 }
 
 void THNN_(LogSoftMax_updateGradInput)(
