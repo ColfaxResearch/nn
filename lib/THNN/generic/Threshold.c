@@ -22,7 +22,7 @@ void THNN_(Threshold_updateOutput)(
   }
   else
   {
-    THTensor_(resizeAs)(output, input);
+    THTensor_(resizeAs)(output, input); 
     real * in  = THTensor_(data)(input);
     real * out = THTensor_(data)(output);
 #pragma vector nontemporal
@@ -43,21 +43,26 @@ void THNN_(Threshold_updateGradInput)(
 {
   if (inplace)
   {
-    TH_TENSOR_APPLY2(real, gradOutput, real, input,
-      if ((*input_data) <= threshold)
-        *gradOutput_data = 0;
-    );
+    real * in  = THTensor_(data)(input);
+    real * gout  = THTensor_(data)(gradOutput);
+#pragma vector nontemporal
+#pragma omp parallel for simd
+    for (int i = 0; i < input->storage->size; i++) {
+      gout[i] = in[i] <= threshold ? 0 : gout[i];
+    }
     THTensor_(set)(gradInput, gradOutput);
   }
   else
   {
     THTensor_(resizeAs)(gradInput, input);
-    TH_TENSOR_APPLY3(real, gradInput, real, gradOutput, real, input,
-      if ((*input_data) > threshold)
-        *gradInput_data = *gradOutput_data;
-      else
-        *gradInput_data = 0;
-    );
+    real * in  = THTensor_(data)(gradInput);
+    real * gin  = THTensor_(data)(gradInput);
+    real * gout = THTensor_(data)(gradOutput);
+#pragma vector nontemporal
+#pragma omp parallel for simd
+    for (int i = 0; i < gradOutput->storage->size; i++) {
+      gin[i] = in[i] > threshold ? gout[i] : 0;
+    }
   }
 }
 
