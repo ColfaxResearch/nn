@@ -55,7 +55,7 @@ void THNN_(Threshold_updateGradInput)(
   else
   {
     THTensor_(resizeAs)(gradInput, input);
-    real * in  = THTensor_(data)(gradInput);
+    real * in  = THTensor_(data)(input);
     real * gin  = THTensor_(data)(gradInput);
     real * gout = THTensor_(data)(gradOutput);
 #pragma vector nontemporal
